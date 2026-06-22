@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liberdus Status System - Local Demo</title>
+  <link
+    rel="icon"
+    type="image/png"
+    href="https://liberdus.com/token/assets/logo.png"
+  >
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .demo-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+    }
+
+    .demo-controls-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .demo-controls-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .demo-controls button {
+      min-height: 30px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      color: #111827;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .demo-controls button:hover {
+      background: #f3f4f6;
+    }
+
+    .demo-controls button.active {
+      border-color: #16a34a;
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    @media (max-width: 768px) {
+      .demo-controls {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+  <script>
+    window.LIBERDUS_STATUS_API = "http://localhost:4178";
+    window.LIBERDUS_STATUS_NETWORK = "testnet";
+  </script>
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <a
+        href="https://discord.com"
+        class="brand-link"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <img
+          src="https://liberdus.com/site/img/logo.png"
+          alt="Liberdus logo"
+          class="brand-logo"
+        >
+        <div class="brand-text">
+          <div class="brand-title-row">
+            <span class="brand-title-version">(0.0.10)</span>
+          </div>
+          <div class="brand-subtitle">Service Status</div>
+        </div>
+      </a>
+    </header>
+
+    <div class="demo-controls" aria-label="Local demo controls">
+      <div>
+        <div class="demo-controls-title">Local outage simulation</div>
+      </div>
+      <div class="demo-controls-actions">
+        <button type="button" data-demo-mode="all-up" class="active">All up</button>
+        <button type="button" data-demo-mode="discord-down">Discord down</button>
+        <button type="button" data-demo-mode="site-down">Site down</button>
+        <button type="button" data-demo-mode="backend-down">Backend fetch failed</button>
+      </div>
+    </div>
+
+    <div class="status-banner overall-status" id="overall-status-pill">
+      <span id="overall-status-label">All Systems Operational</span>
+    </div>
+
+    <main class="site-main">
+      <section class="section section-uptime">
+        <div class="uptime-header">
+          <div class="uptime-header-left">
+            <h1 class="uptime-title">Service status</h1>
+          </div>
+          <div class="uptime-header-right">
+            <span class="uptime-caption">Recent uptime history by interval.</span>
+            <div class="uptime-filter">
+              <span id="uptime-interval-label" class="uptime-filter-label">Interval: 1 day</span>
+              <select id="uptime-interval-select" class="uptime-filter-select">
+                <option value="5m">5 minutes</option>
+                <option value="10m">10 minutes</option>
+                <option value="20m">20 minutes</option>
+                <option value="30m">30 minutes</option>
+                <option value="1h">1 hour</option>
+                <option value="1d" selected>1 day</option>
+              </select>
+              <span id="network-filter-label" class="uptime-filter-label">Network: Testnet</span>
+              <select id="network-filter-select" class="uptime-filter-select">
+                <option value="devnet">Devnet</option>
+                <option value="testnet" selected>Testnet</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="service-uptime-list" class="service-uptime-list"></div>
+        <div id="historical-uptime-panel" class="historical-uptime-panel hidden">
+          <div class="historical-header">
+            <div class="historical-title">Historical uptime (last 90 days, UTC)</div>
+            <button id="historical-close-button" class="historical-close-button" type="button">Close</button>
+          </div>
+          <div id="historical-calendar-grid" class="historical-calendar-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="uptime-tooltip" class="uptime-tooltip"></div>
+
+    <footer class="site-footer">
+      <div class="footer-left">
+        <span class="footer-brand">Status</span>
+        <span class="footer-divider">•</span>
+        <span>Realtime uptime at a glance</span>
+      </div>
+      <div class="footer-right">
+        <span id="backend-status-label" class="backend-status-label">Status server: checking...</span>
+        <span class="footer-divider">•</span>
+        <span id="last-updated-label">Last updated: just now</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="main.js"></script>
+  <script>
+    const demoButtons = document.querySelectorAll("[data-demo-mode]");
+
+    async function setDemoMode(mode) {
+      demoButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.demoMode === mode);
+      });
+
+      if (mode === "backend-down") {
+        window.LIBERDUS_STATUS_API = "http://localhost:4999";
+        await window.refreshLiberdusStatus();
+        return;
+      }
+
+      window.LIBERDUS_STATUS_API = "http://localhost:4178";
+      await fetch(
+        `${window.LIBERDUS_STATUS_API}/demo/mode?mode=${encodeURIComponent(mode)}`
+      );
+      await window.refreshLiberdusStatus();
+    }
+
+    demoButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        setDemoMode(button.dataset.demoMode);
+      });
+    });
+
+    window.setLiberdusDemoMode = setDemoMode;
+
+    const initialMode = new URLSearchParams(window.location.search).get(
+      "scenario"
+    );
+    if (
+      ["all-up", "discord-down", "site-down", "backend-down"].includes(
+        initialMode
+      )
+    ) {
+      setDemoMode(initialMode);
+    }
+  </script>
+</body>
+</html>

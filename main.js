@@ -1,11 +1,17 @@
-const API_BASE =
-  typeof window !== "undefined" &&
-  window.LIBERDUS_STATUS_API &&
-  typeof window.LIBERDUS_STATUS_API === "string"
+function getApiBase() {
+  return typeof window !== "undefined" &&
+    window.LIBERDUS_STATUS_API &&
+    typeof window.LIBERDUS_STATUS_API === "string"
     ? window.LIBERDUS_STATUS_API
     : "https://status.liberdus.com";
+}
 
-let CURRENT_NETWORK = "devnet";
+let CURRENT_NETWORK =
+  typeof window !== "undefined" &&
+  window.LIBERDUS_STATUS_NETWORK &&
+  typeof window.LIBERDUS_STATUS_NETWORK === "string"
+    ? window.LIBERDUS_STATUS_NETWORK
+    : "devnet";
 
 const INTERVAL_OPTIONS = [
   { value: "5m", label: "5 minutes" },
@@ -22,6 +28,8 @@ const NETWORK_OPTIONS = [
 ];
 
 const MAX_HISTORY_DAYS = 7;
+const STATUS_FETCH_FAILED_MESSAGE =
+  "Status fetch failed. Please check again later.";
 
 const CATEGORY_DEFINITIONS = [
   { id: "gateways", label: "Gateways" },
@@ -32,72 +40,7 @@ const CATEGORY_DEFINITIONS = [
   { id: "faucet", label: "Faucet" },
   { id: "oauth", label: "OAuth" },
   { id: "goldenticket", label: "Golden Ticket" },
-];
-
-const mockServices = [
-  {
-    id: "core-api",
-    name: "Core API",
-    description: "Public, authenticated RPC and REST endpoints",
-    group: "Core",
-    status: "operational",
-    uptime30d: 99.982,
-    lastIncidentAt: "2026-01-15T09:30:00Z",
-  },
-  {
-    id: "ingest",
-    name: "Ingest pipeline",
-    description: "Ingestion and normalization for events",
-    group: "Data",
-    status: "operational",
-    uptime30d: 99.963,
-    lastIncidentAt: "2026-01-08T14:10:00Z",
-  },
-  {
-    id: "dashboards",
-    name: "Dashboards",
-    description: "Web dashboard and configuration UI",
-    group: "UX",
-    status: "degraded",
-    uptime30d: 99.721,
-    lastIncidentAt: "2026-01-27T06:05:00Z",
-  },
-  {
-    id: "webhooks",
-    name: "Webhooks",
-    description: "Outbound notifications and incident webhooks",
-    group: "Integrations",
-    status: "operational",
-    uptime30d: 99.901,
-    lastIncidentAt: "2026-01-11T18:40:00Z",
-  },
-];
-
-const mockIncidents = [
-  {
-    id: "incident-3",
-    title: "Elevated error rates on dashboards",
-    severity: "minor",
-    startedAt: "2026-01-27T05:40:00Z",
-    resolvedAt: null,
-    services: ["dashboards"],
-  },
-  {
-    id: "incident-2",
-    title: "Webhook delivery delays",
-    severity: "minor",
-    startedAt: "2026-01-11T18:12:00Z",
-    resolvedAt: "2026-01-11T18:40:00Z",
-    services: ["webhooks"],
-  },
-  {
-    id: "incident-1",
-    title: "API p99 latency increase",
-    severity: "major",
-    startedAt: "2026-01-08T13:32:00Z",
-    resolvedAt: "2026-01-08T14:10:00Z",
-    services: ["core-api", "ingest"],
-  },
+  { id: "discordBot", label: "Discord Bot" },
 ];
 
 let backendHistory = null;
@@ -111,6 +54,67 @@ let currentSnapshot = null;
 let refreshIntervalId = null;
 let backendHealthIntervalId = null;
 
+function normalizeServiceStatus(value) {
+  const status = String(value || "unknown").toLowerCase();
+  if (
+    status === "operational" ||
+    status === "healthy" ||
+    status === "active" ||
+    status === "up" ||
+    status === "ok"
+  ) {
+    return "operational";
+  }
+  if (
+    status === "degraded" ||
+    status === "slow" ||
+    status === "warning" ||
+    status === "warn"
+  ) {
+    return "degraded";
+  }
+  if (
+    status === "outage" ||
+    status === "down" ||
+    status === "offline" ||
+    status === "failed" ||
+    status === "error"
+  ) {
+    return "outage";
+  }
+  return "unknown";
+}
+
+function isBotService(service) {
+  const text = `${service.id || ""} ${service.name || ""}`.toLowerCase();
+  return text.includes("discord") || text.includes("bot");
+}
+
+function getServiceStatusText(service) {
+  const status = service.status || "unknown";
+  if (isBotService(service)) {
+    if (status === "operational") return "Active";
+    if (status === "outage") return "Down";
+    if (status === "degraded") return "Degraded";
+    return "Status Unknown";
+  }
+  if (status === "operational") return "Operational";
+  if (status === "degraded") return "Degraded Performance";
+  if (status === "outage") return "Major Outage";
+  return "Status Unknown";
+}
+
+function buildFetchFailedSnapshot() {
+  return {
+    services: [],
+    incidents: [],
+    generatedAt: null,
+    indicator: "critical",
+    statusDescription: STATUS_FETCH_FAILED_MESSAGE,
+    fetchFailed: true,
+  };
+}
+
 async function loadBackendHistory(days, interval) {
   try {
     const params = new URLSearchParams();
@@ -123,7 +127,7 @@ async function loadBackendHistory(days, interval) {
     if (CURRENT_NETWORK) {
       params.set("network", CURRENT_NETWORK);
     }
-    const url = `${API_BASE}/api/history?${params.toString()}`;
+    const url = `${getApiBase()}/api/history?${params.toString()}`;
     const response = await fetch(url, { method: "GET" });
     if (!response.ok) {
       return null;
@@ -207,14 +211,18 @@ async function loadBackendSnapshot() {
     if (CURRENT_NETWORK) {
       params.set("network", CURRENT_NETWORK);
     }
-    const url = `${API_BASE}/api/summary?${params.toString()}`;
+    const url = `${getApiBase()}/api/summary?${params.toString()}`;
     const response = await fetch(url, { method: "GET" });
     if (!response.ok) {
       throw new Error("Non-200 response");
     }
     const data = await response.json();
-    const services = (data.services || []).map((service) => {
-      const status = service.state || "unknown";
+    const rawServices = Array.isArray(data.services) ? data.services : null;
+    if (!rawServices) {
+      throw new Error("Invalid summary response");
+    }
+    const services = rawServices.map((service) => {
+      const status = normalizeServiceStatus(service.state || service.status);
       const environmentLabel = service.environment
         ? service.environment.toUpperCase()
         : "";
@@ -232,7 +240,8 @@ async function loadBackendSnapshot() {
         description: descriptionParts.join(" • "),
         group: groupLabel || environmentLabel || "–",
         status,
-        uptime30d: null,
+        uptime30d:
+          typeof service.healthPct === "number" ? service.healthPct : null,
         lastIncidentAt: null,
       };
     });
@@ -243,15 +252,10 @@ async function loadBackendSnapshot() {
       generatedAt: data.generatedAt || null,
       indicator: data.indicator || "none",
       statusDescription: data.statusDescription || null,
+      fetchFailed: false,
     };
   } catch (error) {
-    return {
-      services: mockServices,
-      incidents: mockIncidents,
-      generatedAt: null,
-      indicator: "none",
-      statusDescription: null,
-    };
+    return buildFetchFailedSnapshot();
   }
 }
 
@@ -346,6 +350,7 @@ function updateBackendStatusIndicator(isOnline) {
 
 function renderOverview(services, incidents, snapshot) {
   const overall = summarizeOverallStatus(services, incidents);
+  const fetchFailed = Boolean(snapshot && snapshot.fetchFailed);
 
   const pill = document.getElementById("overall-status-pill");
   const label = document.getElementById("overall-status-label");
@@ -353,7 +358,9 @@ function renderOverview(services, incidents, snapshot) {
 
   if (pill) {
     pill.classList.remove("degraded", "outage");
-    if (overall.status === "degraded") {
+    if (fetchFailed) {
+      pill.classList.add("outage");
+    } else if (overall.status === "degraded") {
       pill.classList.add("degraded");
     } else if (overall.status === "outage") {
       pill.classList.add("outage");
@@ -361,7 +368,9 @@ function renderOverview(services, incidents, snapshot) {
   }
 
   if (label) {
-    if (snapshot && snapshot.statusDescription) {
+    if (fetchFailed) {
+      label.textContent = STATUS_FETCH_FAILED_MESSAGE;
+    } else if (snapshot && snapshot.statusDescription) {
       label.textContent = snapshot.statusDescription;
     } else {
       label.textContent = overall.statusLabel;
@@ -369,7 +378,9 @@ function renderOverview(services, incidents, snapshot) {
   }
 
   if (lastUpdated) {
-    if (snapshot && snapshot.generatedAt) {
+    if (fetchFailed) {
+      lastUpdated.textContent = "Last updated: unavailable";
+    } else if (snapshot && snapshot.generatedAt) {
       const date = new Date(snapshot.generatedAt);
       if (!Number.isNaN(date.getTime())) {
         lastUpdated.textContent = `Last updated: ${date.toLocaleTimeString()}`;
@@ -420,14 +431,7 @@ function renderServicesTable(services) {
     const statusPill = document.createElement("span");
     const status = service.status || "unknown";
     statusPill.className = `status-pill ${status}`;
-    statusPill.textContent =
-      status === "operational"
-        ? "Operational"
-        : status === "degraded"
-        ? "Degraded"
-        : status === "outage"
-        ? "Outage"
-        : "Unknown";
+    statusPill.textContent = getServiceStatusText(service);
     statusCell.appendChild(statusPill);
 
     const uptimeCell = document.createElement("td");
@@ -569,6 +573,13 @@ function groupServicesByCategory(services) {
       categoryId = "oauth";
     } else if (name.includes("golden")) {
       categoryId = "goldenticket";
+    } else if (
+      name.includes("discord") ||
+      name.includes("bot") ||
+      String(service.id || "").toLowerCase().includes("discord") ||
+      String(service.id || "").toLowerCase().includes("bot")
+    ) {
+      categoryId = "discordBot";
     }
     if (!categoryId) {
       continue;
@@ -739,27 +750,20 @@ function buildServiceHistory(service, days) {
     }
   }
   const today = new Date();
-  const history = [];
-  const downIndexes = [5, 36];
-  const partialIndexes = [12, 20, 48, 72];
-  for (let offset = days - 1; offset >= 0; offset -= 1) {
-    const date = new Date(today);
-    date.setDate(today.getDate() - offset);
-    let successPct = 99.5 + (Math.random() - 0.5);
-    if (downIndexes.includes(offset)) {
-      successPct = 40 + Math.random() * 10;
-    } else if (partialIndexes.includes(offset)) {
-      successPct = 65 + Math.random() * 20;
-    }
-    const state =
-      successPct <= 50
-        ? "down"
-        : successPct <= 92
-        ? "partial"
-        : "up";
-    history.push({ date, state, successPct });
+  const successPct =
+    typeof service.uptime30d === "number" && !Number.isNaN(service.uptime30d)
+      ? service.uptime30d
+      : null;
+  if (successPct == null) {
+    return [];
   }
-  return history;
+  return [
+    {
+      date: today,
+      state: classifyStateFromPct(successPct),
+      successPct,
+    },
+  ];
 }
 
 function handleBarEnter(event) {
@@ -908,8 +912,13 @@ function renderServiceUptimeList(services, days) {
 
   if (!services.length) {
     const empty = document.createElement("div");
-    empty.className = "incident-empty";
-    empty.textContent = "No services configured yet.";
+    empty.className = currentSnapshot && currentSnapshot.fetchFailed
+      ? "incident-empty status-fetch-error"
+      : "incident-empty";
+    empty.textContent =
+      currentSnapshot && currentSnapshot.fetchFailed
+        ? STATUS_FETCH_FAILED_MESSAGE
+        : "No services configured yet.";
     container.appendChild(empty);
     return;
   }
@@ -963,16 +972,12 @@ function renderServiceUptimeList(services, days) {
       const status = service.status || "unknown";
       if (status === "operational") {
         statusLabel.classList.add("status-operational");
-        statusLabel.textContent = "Operational";
       } else if (status === "degraded") {
         statusLabel.classList.add("status-degraded");
-        statusLabel.textContent = "Degraded Performance";
       } else if (status === "outage") {
         statusLabel.classList.add("status-outage");
-        statusLabel.textContent = "Major Outage";
-      } else {
-        statusLabel.textContent = "Status Unknown";
       }
+      statusLabel.textContent = getServiceStatusText(service);
 
       rowHeader.appendChild(titleWrapper);
       rowHeader.appendChild(statusLabel);
@@ -1275,6 +1280,14 @@ async function refreshData() {
   currentSnapshot = snapshot;
   currentServices = snapshot.services;
   currentIncidents = snapshot.incidents;
+  if (snapshot.fetchFailed) {
+    backendHistory = null;
+    updateBackendStatusIndicator(false);
+    renderOverview(currentServices, currentIncidents, currentSnapshot);
+    renderServiceUptimeList(currentServices, currentBarsCount);
+    return;
+  }
+  updateBackendStatusIndicator(true);
   await loadBackendHistory(MAX_HISTORY_DAYS, currentInterval);
   if (!currentBarsCount) {
     currentBarsCount = getMaxHistoryPoints();
@@ -1288,10 +1301,14 @@ async function refreshData() {
   }
 }
 
+if (typeof window !== "undefined") {
+  window.refreshLiberdusStatus = refreshData;
+}
+
 async function checkBackendHealth() {
   const previousOnline = backendOnline;
   try {
-    const response = await fetch(`${API_BASE}/health`, { method: "GET" });
+    const response = await fetch(`${getApiBase()}/health`, { method: "GET" });
     if (!response.ok) {
       updateBackendStatusIndicator(false);
       return false;

@@ -730,6 +730,12 @@ body {
   color: var(--muted);
 }
 
+.status-fetch-error {
+  padding: 12px 16px;
+  color: #991b1b;
+  font-weight: 500;
+}
+
 .uptime-tooltip {
   position: fixed;
   z-index: 20;
