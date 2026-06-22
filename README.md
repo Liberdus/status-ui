@@ -18,7 +18,7 @@ The frontend calls a small backend service that exposes:
 
 By default, the frontend expects the backend at:
 
-- `http://localhost:7070`
+- `https://status.liberdus.com`
 
 You can change this in two ways.
 
@@ -40,10 +40,18 @@ If `window.LIBERDUS_STATUS_API` is set to a string, the frontend uses it as the 
 If you do **not** set `window.LIBERDUS_STATUS_API`, the frontend uses:
 
 ```js
-http://localhost:7070
+https://status.liberdus.com
 ```
 
-Make sure your backend is listening on that host and port.
+Make sure your backend is reachable at that origin.
+
+If the summary request fails, the dashboard shows:
+
+```text
+Status fetch failed. Please check again later.
+```
+
+No mock service data is shown when the backend is unavailable.
 
 ## Choosing the network (Devnet vs Testnet)
 
@@ -68,3 +76,24 @@ For simple usage:
 
 The dashboard should load and start showing the current status and uptime history from the configured backend.
 
+When the backend includes a Discord bot service, such as `discord-status-bot`,
+the dashboard groups it under “Discord Bot” and displays whether it is
+`Active` or `Down`.
+
+## Local outage demo
+
+For local demos, run the static UI and mock backend in separate terminals:
+
+```bash
+python3 -m http.server 4177
+node mock-status-backend.mjs
+```
+
+Then open:
+
+```text
+http://localhost:4177/local-demo.html
+```
+
+The demo page includes controls for all-up, Discord-down, site-down, and
+backend-fetch-failed states without changing the production backend.
