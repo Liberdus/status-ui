@@ -821,3 +821,6 @@ body {
     justify-self: flex-start;
   }
 }
+
+.overall-status.unknown { background: #6b7280; color: #fff; }
+.uptime-bar:not(.uptime-bar-up):not(.uptime-bar-slow):not(.uptime-bar-issue):not(.uptime-bar-down) { background: #9ca3af; }

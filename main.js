@@ -115,6 +115,18 @@ function buildFetchFailedSnapshot() {
   };
 }
 
+async function fetchStatus(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, { method: "GET", signal: controller.signal });
+    if (!response.ok) throw new Error("Status request failed");
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadBackendHistory(days, interval) {
   try {
     const params = new URLSearchParams();
@@ -128,11 +140,7 @@ async function loadBackendHistory(days, interval) {
       params.set("network", CURRENT_NETWORK);
     }
     const url = `${getApiBase()}/api/history?${params.toString()}`;
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) {
-      return null;
-    }
-    const data = await response.json();
+    const data = await fetchStatus(url);
     const historyByService = new Map();
     const services = data.services || [];
     const intervalMinutesValue =
@@ -176,10 +184,7 @@ async function loadBackendHistory(days, interval) {
           typeof firstDownMs === "number" && Number.isFinite(firstDownMs)
             ? new Date(firstDownMs)
             : null;
-        const state =
-          successPctValue == null || Number.isNaN(successPctValue)
-            ? "up"
-            : classifyStateFromPct(successPctValue);
+        const state = classifyStateFromPct(successPctValue);
         list.push({
           date,
           state,
@@ -201,6 +206,7 @@ async function loadBackendHistory(days, interval) {
     };
     return backendHistory;
   } catch (error) {
+    backendHistory = null;
     return null;
   }
 }
@@ -212,11 +218,11 @@ async function loadBackendSnapshot() {
       params.set("network", CURRENT_NETWORK);
     }
     const url = `${getApiBase()}/api/summary?${params.toString()}`;
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) {
-      throw new Error("Non-200 response");
+    const data = await fetchStatus(url);
+    const age = Date.now() - Date.parse(data.generatedAt);
+    if (!Number.isFinite(age) || age < -60000 || age > 15 * 60 * 1000) {
+      throw new Error("Status snapshot is stale");
     }
-    const data = await response.json();
     const rawServices = Array.isArray(data.services) ? data.services : null;
     if (!rawServices) {
       throw new Error("Invalid summary response");
@@ -260,7 +266,7 @@ async function loadBackendSnapshot() {
 }
 
 function summarizeOverallStatus(services, incidents) {
-  let status = "operational";
+  let status = "unknown";
   const total = services.length;
   if (total > 0) {
     let outageCount = 0;
@@ -276,7 +282,7 @@ function summarizeOverallStatus(services, incidents) {
       status = "outage";
     } else if (outageCount > 0 || degradedCount > 0) {
       status = "degraded";
-    } else {
+    } else if (services.every(service => service.status === "operational")) {
       status = "operational";
     }
   }
@@ -357,20 +363,22 @@ function renderOverview(services, incidents, snapshot) {
   const lastUpdated = document.getElementById("last-updated-label");
 
   if (pill) {
-    pill.classList.remove("degraded", "outage");
+    pill.classList.remove("degraded", "outage", "unknown");
     if (fetchFailed) {
       pill.classList.add("outage");
     } else if (overall.status === "degraded") {
       pill.classList.add("degraded");
     } else if (overall.status === "outage") {
       pill.classList.add("outage");
+    } else if (overall.status === "unknown") {
+      pill.classList.add("unknown");
     }
   }
 
   if (label) {
     if (fetchFailed) {
       label.textContent = STATUS_FETCH_FAILED_MESSAGE;
-    } else if (snapshot && snapshot.statusDescription) {
+    } else if (overall.status !== "unknown" && snapshot && snapshot.statusDescription) {
       label.textContent = snapshot.statusDescription;
     } else {
       label.textContent = overall.statusLabel;
@@ -542,7 +550,7 @@ function getMaxHistoryPoints() {
 }
 
 function classifyStateFromPct(successPct) {
-  if (successPct == null || Number.isNaN(successPct)) return "up";
+  if (!Number.isFinite(successPct) || successPct < 0 || successPct > 100) return "unknown";
   if (successPct <= 0) return "down";
   if (successPct <= 20) return "issue";
   if (successPct < 100) return "slow";
@@ -709,9 +717,9 @@ function buildServiceHistory(service, days) {
             ? entry.date
             : new Date();
         const successPctValue =
-          entry.successPct == null || Number.isNaN(entry.successPct)
-            ? 100
-            : entry.successPct;
+          Number.isFinite(entry.successPct) && entry.successPct >= 0 && entry.successPct <= 100
+            ? entry.successPct
+            : null;
         const state = classifyStateFromPct(successPctValue);
         result.push({
           date,
@@ -749,21 +757,7 @@ function buildServiceHistory(service, days) {
       }
     }
   }
-  const today = new Date();
-  const successPct =
-    typeof service.uptime30d === "number" && !Number.isNaN(service.uptime30d)
-      ? service.uptime30d
-      : null;
-  if (successPct == null) {
-    return [];
-  }
-  return [
-    {
-      date: today,
-      state: classifyStateFromPct(successPct),
-      successPct,
-    },
-  ];
+  return [];
 }
 
 function handleBarEnter(event) {
@@ -787,7 +781,7 @@ function handleBarEnter(event) {
       ? new Date(firstDownAtValue)
       : null;
   let statusLabel = "Unknown";
-  let description = "";
+  let description = "No monitoring data available for this period.";
   if (status === "up") {
     statusLabel = "Operational";
   } else if (status === "slow") {
@@ -892,7 +886,11 @@ function handleBarEnter(event) {
   const secondLine =
     dateLabel && serviceName ? `${serviceName} – ${statusLabel}` : statusLabel;
   const details = description;
-  tooltip.innerHTML = `${firstLine}<br>${secondLine}<br>${details}`;
+  tooltip.replaceChildren(
+    document.createTextNode(firstLine), document.createElement("br"),
+    document.createTextNode(secondLine), document.createElement("br"),
+    document.createTextNode(details)
+  );
   const rect = bar.getBoundingClientRect();
   tooltip.style.left = `${rect.left + rect.width / 2}px`;
   tooltip.style.top = `${rect.bottom + 8}px`;
@@ -1003,7 +1001,7 @@ function renderServiceUptimeList(services, days) {
         bar.dataset.date = entry.date.toISOString();
         bar.dataset.status = entry.state;
         bar.dataset.service = service.name;
-        bar.dataset.pct = entry.successPct.toFixed(1);
+        bar.dataset.pct = entry.successPct == null ? "" : entry.successPct.toFixed(1);
         if (entry.total != null && !Number.isNaN(entry.total)) {
           bar.dataset.total = String(entry.total);
         }
@@ -1096,6 +1094,8 @@ function buildDailyHistoryMap() {
           nextState = "issue";
         } else if (prev === "slow" || state === "slow") {
           nextState = "slow";
+        } else if (prev === "unknown" || state === "unknown") {
+          nextState = "unknown";
         } else {
           nextState = "up";
         }
@@ -1170,7 +1170,7 @@ function renderHistoricalCalendar() {
       const dayNumber = item.date.getUTCDate();
       if (item.state === "up") {
         cell.classList.add("calendar-day-up");
-      } else if (item.state === "partial") {
+      } else if (item.state === "slow" || item.state === "issue") {
         cell.classList.add("calendar-day-partial");
       } else if (item.state === "down") {
         cell.classList.add("calendar-day-down");
@@ -1308,8 +1308,9 @@ if (typeof window !== "undefined") {
 async function checkBackendHealth() {
   const previousOnline = backendOnline;
   try {
-    const response = await fetch(`${getApiBase()}/health`, { method: "GET" });
-    if (!response.ok) {
+    const health = await fetchStatus(`${getApiBase()}/health`);
+    const age = Date.now() - Date.parse(health.generatedAt);
+    if (health.status !== "ok" || !Number.isFinite(age) || age < -60000 || age > 15 * 60 * 1000) {
       updateBackendStatusIndicator(false);
       return false;
     }

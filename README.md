@@ -85,7 +85,7 @@ the dashboard groups it under “Discord Bot” and displays whether it is
 For local demos, run the static UI and mock backend in separate terminals:
 
 ```bash
-python3 -m http.server 4177
+node local-server.mjs
 node mock-status-backend.mjs
 ```
 
@@ -97,3 +97,11 @@ http://localhost:4177/local-demo.html
 
 The demo page includes controls for all-up, Discord-down, site-down, and
 backend-fetch-failed states without changing the production backend.
+
+## Serving safely
+
+Use `node local-server.mjs` for local previews. It binds to loopback and serves only the four frontend assets and the demo page; it never serves environment files, Git metadata, or review notes. Deploy only `index.html`, `main.js`, and `style.css` to the public host. Keep secrets outside that directory, including local credential notes. Bind the mock API to loopback and keep it out of production.
+
+Missing samples display as unknown, and snapshots older than 15 minutes are unavailable. This accommodates the backend's five-minute polling schedule. Historical fetch failures clear historical bars instead of synthesizing uptime.
+
+Run regression checks with `node --test test/*.test.cjs`. On the production frontend host, configure a Content Security Policy allowing scripts/styles only from self, images from self and `https://liberdus.com`, and connections to the approved status API; include `base-uri 'none'`, `object-src 'none'`, and `frame-ancestors 'none'`. Keep inline-script demo assets off the production host.

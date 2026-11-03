@@ -93,7 +93,6 @@ function historyFor(service) {
 
 function sendJson(response, status, body) {
   response.writeHead(status, {
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
@@ -102,7 +101,16 @@ function sendJson(response, status, body) {
 }
 
 const server = http.createServer((request, response) => {
-  const url = new URL(request.url || "/", `http://${request.headers.host}`);
+  const allowedHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+  const allowedOrigins = new Set(["http://localhost:4177", "http://127.0.0.1:4177"]);
+  const origin = request.headers.origin;
+  if (!allowedHosts.has(request.headers.host) || (origin && !allowedOrigins.has(origin))) {
+    sendJson(response, 403, { error: "Forbidden" });
+    return;
+  }
+  if (origin) response.setHeader("Access-Control-Allow-Origin", origin);
+  response.setHeader("Vary", "Origin");
+  const url = new URL(request.url || "/", "http://localhost");
 
   if (request.method === "OPTIONS") {
     sendJson(response, 200, {});
@@ -110,6 +118,10 @@ const server = http.createServer((request, response) => {
   }
 
   if (url.pathname === "/demo/mode") {
+    if (request.method !== "POST" || request.headers["content-type"] !== "application/json") {
+      sendJson(response, 405, { error: "Use POST with application/json" });
+      return;
+    }
     const nextMode = url.searchParams.get("mode");
     if (["all-up", "discord-down", "site-down"].includes(nextMode)) {
       mode = nextMode;
@@ -164,7 +176,7 @@ const server = http.createServer((request, response) => {
   sendJson(response, 404, { error: "Not found" });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`Mock status backend running at http://localhost:${PORT}`);
   console.log("Modes:");
   console.log(`  http://localhost:${PORT}/demo/mode?mode=all-up`);

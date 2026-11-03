@@ -26,3 +26,6 @@ status-history.db
 
 
 
+
+# Local credential notes must never be committed
+env.md
